@@ -12,7 +12,6 @@ const modelId = 'gemini-2.5-flash';
 
 // --- Goal Generation ---
 
-// @google/genai-schema-fix: The `Schema` type is not exported from @google/genai. Use a const object for the schema.
 const goalSchema = {
   type: Type.OBJECT,
   properties: {
@@ -43,7 +42,7 @@ const goalSchema = {
 };
 
 export const generateCityGoal = async (stats: CityStats, grid: Grid): Promise<AIGoal | null> => {
-  // @google/genai-api-key-fix: The API key must be obtained exclusively from the environment variable `process.env.API_KEY`. Do not add checks for its existence.
+  // @google/genai-api-key-fix: The API key must be obtained exclusively from the environment variable `process.env.API_KEY`.
 
   // Count buildings
   const counts: Record<string, number> = {};
@@ -56,13 +55,16 @@ export const generateCityGoal = async (stats: CityStats, grid: Grid): Promise<AI
     Day: ${stats.day}
     Money: $${stats.money}
     Population: ${stats.population}
+    Era: ${stats.era}
+    Weather: ${stats.weather}
     Buildings: ${JSON.stringify(counts)}
     Building Costs/Stats: ${JSON.stringify(
       Object.values(BUILDINGS).filter(b => b.type !== BuildingType.None).map(b => ({type: b.type, cost: b.cost, pop: b.popGen, income: b.incomeGen}))
     )}
   `;
 
-  const prompt = `You are the AI City Advisor for a simulation game. Based on the current city stats, generate a challenging but achievable short-term goal for the player to help the city grow. Return JSON.`;
+  const prompt = `You are the AI City Advisor for a simulation game. Based on the current city stats and Era, generate a challenging but achievable short-term goal for the player to help the city grow. 
+  If in Primitive era, focus on basic growth. If Future, focus on high density. Return JSON.`;
 
   try {
     const response = await ai.models.generateContent({
@@ -89,7 +91,6 @@ export const generateCityGoal = async (stats: CityStats, grid: Grid): Promise<AI
 
 // --- News Feed Generation ---
 
-// @google/genai-schema-fix: The `Schema` type is not exported from @google/genai. Use a const object for the schema.
 const newsSchema = {
   type: Type.OBJECT,
   properties: {
@@ -100,10 +101,10 @@ const newsSchema = {
 };
 
 export const generateNewsEvent = async (stats: CityStats, recentAction: string | null): Promise<NewsItem | null> => {
-  // @google/genai-api-key-fix: The API key must be obtained exclusively from the environment variable `process.env.API_KEY`. Do not add checks for its existence.
+  // @google/genai-api-key-fix: The API key must be obtained exclusively from the environment variable `process.env.API_KEY`.
 
-  const context = `City Stats - Pop: ${stats.population}, Money: ${stats.money}, Day: ${stats.day}. ${recentAction ? `Recent Action: ${recentAction}` : ''}`;
-  const prompt = "Generate a very short, isometric-sim-city style news headline based on the city state. Can be funny, cynical, or celebratory.";
+  const context = `City Stats - Pop: ${stats.population}, Money: ${stats.money}, Day: ${stats.day}, Era: ${stats.era}, Weather: ${stats.weather}. ${recentAction ? `Recent Action: ${recentAction}` : ''}`;
+  const prompt = "Generate a very short, isometric-sim-city style news headline based on the city state and Era. If it's raining or snowing, mention it. If in Primitive era, use primitive language. If Future, use sci-fi jargon. Can be funny, cynical, or celebratory.";
 
   try {
     const response = await ai.models.generateContent({
