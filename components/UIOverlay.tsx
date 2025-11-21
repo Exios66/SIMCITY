@@ -25,6 +25,7 @@ const tools = [
   BuildingType.Residential,
   BuildingType.Commercial,
   BuildingType.Industrial,
+  BuildingType.Port,
   BuildingType.Farm,
   BuildingType.Defense,
   BuildingType.Park,
@@ -55,24 +56,19 @@ const ToolButton: React.FC<{
         ${isSelected ? 'border-white bg-white/20 scale-110 z-10' : 'border-gray-600 bg-gray-900/80 hover:bg-gray-800'}
         ${!isBulldoze && !canAfford ? 'opacity-50 cursor-not-allowed grayscale' : 'cursor-pointer'}
       `}
-      title={`${config.name} - $${config.costMoney}, ${config.costWood} Wood, ${config.costStone} Stone`}
+      title={`${config.name} - $${config.costMoney}, ${config.costWood} W, ${config.costStone} S`}
     >
       <div className="w-6 h-6 md:w-8 md:h-8 rounded mb-0.5 md:mb-1 border border-black/30 shadow-inner flex items-center justify-center overflow-hidden" style={{ backgroundColor: isBulldoze ? 'transparent' : bgColor }}>
         {isBulldoze && <div className="w-full h-full bg-red-600 text-white flex justify-center items-center font-bold text-base md:text-lg">✕</div>}
         {type === BuildingType.Road && <div className="w-full h-2 bg-gray-800 transform -rotate-45"></div>}
         {type === BuildingType.Defense && <div className="text-[10px]">🛡️</div>}
         {type === BuildingType.Farm && <div className="text-[10px]">🌾</div>}
+        {type === BuildingType.Port && <div className="text-[10px]">⚓</div>}
       </div>
       <span className="text-[7px] md:text-[9px] font-bold text-white uppercase tracking-wider drop-shadow-md leading-none truncate max-w-full px-1">{config.name}</span>
       {config.costMoney > 0 && (
         <div className="flex flex-col items-center leading-none mt-0.5">
             <span className={`text-[8px] md:text-[9px] font-mono ${canAffordMoney ? 'text-green-300' : 'text-red-400'}`}>${config.costMoney}</span>
-            {(config.costWood > 0 || config.costStone > 0) && (
-                <div className="flex gap-0.5">
-                    {config.costWood > 0 && <span className={`text-[7px] ${canAffordWood?'text-amber-500':'text-red-500'}`}>W{config.costWood}</span>}
-                    {config.costStone > 0 && <span className={`text-[7px] ${canAffordStone?'text-gray-400':'text-red-500'}`}>S{config.costStone}</span>}
-                </div>
-            )}
         </div>
       )}
     </button>
@@ -98,7 +94,6 @@ const UIOverlay: React.FC<UIOverlayProps> = ({
     }
   }, [newsFeed]);
 
-  // Determine Era Color
   const eraColor = {
       [Era.Primitive]: 'text-amber-600',
       [Era.Industrial]: 'text-gray-400',

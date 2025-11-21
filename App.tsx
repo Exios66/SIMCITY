@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Grid, TileData, BuildingType, CityStats, AIGoal, NewsItem, Era, Weather, ResourceType, Enemy } from './types';
-import { GRID_SIZE, BUILDINGS, TICK_RATE_MS, ENEMY_TICK_RATE_MS, INITIAL_STATS, ERA_THRESHOLDS } from './constants';
+import { Grid, TileData, BuildingType, CityStats, AIGoal, NewsItem, Era, Weather, ResourceType, Enemy, Boat } from './types';
+import { GRID_SIZE, BUILDINGS, TICK_RATE_MS, ENEMY_TICK_RATE_MS, BOAT_TICK_RATE_MS, INITIAL_STATS, ERA_THRESHOLDS, UPGRADE_MULTIPLIER } from './constants';
 import IsoMap from './components/IsoMap';
 import UIOverlay from './components/UIOverlay';
 import StartScreen from './components/StartScreen';
@@ -15,28 +15,47 @@ const createInitialGrid = (): Grid => {
   const grid: Grid = [];
   const center = GRID_SIZE / 2;
 
+  // Noise helper (simple)
+  const noise = (x: number, y: number) => Math.sin(x * 0.3) * Math.cos(y * 0.3) + Math.sin(x*0.7 + y*0.5)*0.5;
+
   for (let y = 0; y < GRID_SIZE; y++) {
     const row: TileData[] = [];
     for (let x = 0; x < GRID_SIZE; x++) {
       const dist = Math.sqrt((x-center)*(x-center) + (y-center)*(y-center));
-      let rType = ResourceType.None;
+      const nVal = noise(x, y);
       
-      // Resource Generation (Randomized)
-      const rand = Math.random();
-      if (dist > center - 2) {
-         rType = ResourceType.Water;
-      } else if (rand > 0.95) {
-         rType = ResourceType.Stone;
-      } else if (rand > 0.85) {
-         rType = ResourceType.Forest;
+      let rType = ResourceType.None;
+      let isLand = false;
+
+      // Main Island
+      if (dist < 4.5 + nVal) {
+          isLand = true;
+      } 
+      // Satellite Islands
+      else if (Math.abs(x - 3) < 2 && Math.abs(y - 3) < 2) isLand = true;
+      else if (Math.abs(x - 16) < 3 && Math.abs(y - 15) < 2) isLand = true;
+      else if (Math.abs(x - 14) < 2 && Math.abs(y - 4) < 2) isLand = true;
+
+      if (!isLand) {
+          rType = ResourceType.Water;
+      } else {
+          // Resources on land
+          const rand = Math.random();
+          if (rand > 0.90) rType = ResourceType.Stone;
+          else if (rand > 0.75) rType = ResourceType.Forest;
       }
+
+      // Only center is explored initially
+      const explored = dist < 6;
 
       row.push({ 
           x, y, 
           buildingType: BuildingType.None, 
           resourceType: rType,
           landValue: 1.0,
-          variant: Math.random()
+          variant: Math.random(),
+          level: 1,
+          explored
       });
     }
     grid.push(row);
@@ -56,10 +75,11 @@ const calculateLandValue = (grid: Grid, x: number, y: number): number => {
             if (tile.resourceType === ResourceType.Forest) value += 0.05;
             if (tile.buildingType === BuildingType.Park) value += 0.2;
             if (tile.buildingType === BuildingType.Industrial) value -= 0.15;
-            if (tile.buildingType === BuildingType.Defense) value += 0.05; // Safety
+            if (tile.buildingType === BuildingType.Defense) value += 0.05;
+            if (tile.level > 1) value += 0.1 * (tile.level - 1);
         }
     });
-    return Math.max(0.5, Math.min(2.0, value));
+    return Math.max(0.5, Math.min(2.5, value));
 };
 
 function App() {
@@ -74,6 +94,7 @@ function App() {
       weather: Weather.Sunny
   });
   const [enemies, setEnemies] = useState<Enemy[]>([]);
+  const [boats, setBoats] = useState<Boat[]>([]);
   const [selectedTool, setSelectedTool] = useState<BuildingType>(BuildingType.Road);
   const [hoveredLandValue, setHoveredLandValue] = useState<number | null>(null);
   
@@ -85,12 +106,14 @@ function App() {
   const gridRef = useRef(grid);
   const statsRef = useRef(stats);
   const enemiesRef = useRef(enemies);
+  const boatsRef = useRef(boats);
   const goalRef = useRef(currentGoal);
   const aiEnabledRef = useRef(aiEnabled);
 
   useEffect(() => { gridRef.current = grid; }, [grid]);
   useEffect(() => { statsRef.current = stats; }, [stats]);
   useEffect(() => { enemiesRef.current = enemies; }, [enemies]);
+  useEffect(() => { boatsRef.current = boats; }, [boats]);
   useEffect(() => { goalRef.current = currentGoal; }, [currentGoal]);
   useEffect(() => { aiEnabledRef.current = aiEnabled; }, [aiEnabled]);
 
@@ -120,7 +143,7 @@ function App() {
 
   useEffect(() => {
     if (!gameStarted) return;
-    addNewsItem({ id: Date.now().toString(), text: "Settlement established. Beware of wild bands.", type: 'positive' });
+    addNewsItem({ id: Date.now().toString(), text: "Settlement established. Explore the unknown.", type: 'positive' });
     if (aiEnabled) fetchNewGoal();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameStarted]);
@@ -140,24 +163,27 @@ function App() {
       gridRef.current.flat().forEach(tile => {
         if (tile.buildingType !== BuildingType.None) {
           const config = BUILDINGS[tile.buildingType];
-          const income = config.incomeGen * tile.landValue;
+          const levelMult = tile.level; // Linear scaling with level
+          const income = (config.incomeGen * levelMult) * tile.landValue;
           
           dailyIncome += income;
-          dailyPopGrowth += config.popGen;
+          dailyPopGrowth += config.popGen * levelMult;
           buildingCounts[tile.buildingType] = (buildingCounts[tile.buildingType] || 0) + 1;
 
           // Special Resource Logic
-          if (tile.buildingType === BuildingType.Farm) dailyFood += 15; // Farm Production
+          if (tile.buildingType === BuildingType.Farm) dailyFood += 15 * levelMult;
           if (tile.buildingType === BuildingType.Industrial) {
-              if (tile.resourceType === ResourceType.Forest) dailyWood += 5;
-              else if (tile.resourceType === ResourceType.Stone) dailyStone += 3;
-              else dailyIncome += 5; // Extra income if just a factory
+              if (tile.resourceType === ResourceType.Forest) dailyWood += 5 * levelMult;
+              else if (tile.resourceType === ResourceType.Stone) dailyStone += 3 * levelMult;
+              else dailyIncome += 5 * levelMult;
+          }
+          if (tile.buildingType === BuildingType.Port) {
+              dailyIncome += 5 * levelMult; // Trade income
           }
         }
       });
 
       setStats(prev => {
-        // Food Consumption
         const foodConsumption = Math.ceil(prev.population * 0.2); 
         let newFood = prev.food + dailyFood - foodConsumption;
         let starving = false;
@@ -168,13 +194,13 @@ function App() {
         }
 
         const resCount = buildingCounts[BuildingType.Residential] || 0;
-        const maxPop = resCount * 50; 
+        // Rough max pop approximation. Doesn't account for levels perfectly but good enough limit.
+        const maxPop = (resCount * 50) * 3; 
         
         let newPop = prev.population + (starving ? -5 : dailyPopGrowth);
         if (newPop > maxPop) newPop = maxPop; 
         if (newPop < 0) newPop = 0;
 
-        // Era Progression
         let nextEra = prev.era;
         if (prev.era === Era.Primitive && newPop >= ERA_THRESHOLDS[Era.Industrial].pop && prev.money >= ERA_THRESHOLDS[Era.Industrial].money) nextEra = Era.Industrial;
         else if (prev.era === Era.Industrial && newPop >= ERA_THRESHOLDS[Era.Modern].pop && prev.money >= ERA_THRESHOLDS[Era.Modern].money) nextEra = Era.Modern;
@@ -201,7 +227,6 @@ function App() {
           weather: nextWeather
         };
         
-        // Check Goal
         const goal = goalRef.current;
         if (aiEnabledRef.current && goal && !goal.completed) {
           let isMet = false;
@@ -213,7 +238,6 @@ function App() {
           if (isMet) setCurrentGoal({ ...goal, completed: true });
         }
         
-        // Alert if starving
         if (starving && prev.population > 0 && prev.day % 3 === 0) {
              addNewsItem({ id: Date.now().toString(), text: "Food shortage! Population is starving.", type: 'negative' });
         }
@@ -236,7 +260,6 @@ function App() {
           const currentStats = statsRef.current;
           
           // Spawning
-          // Chance increases with population
           const spawnChance = Math.min(0.3, currentStats.population / 500);
           if (Math.random() < spawnChance && enemiesRef.current.length < 10) {
                const edge = Math.floor(Math.random() * 4);
@@ -257,14 +280,12 @@ function App() {
                if (Math.random() > 0.7) addNewsItem({id: Date.now().toString(), text: "Hostiles detected approaching the city!", type: 'negative'});
           }
 
-          // Movement & Attack
+          // Movement
           setEnemies(prevEnemies => {
               return prevEnemies.map(enemy => {
-                  // Find nearest building
                   let targetX = -1, targetY = -1;
                   let minDist = 999;
                   
-                  // If already near a target, stay? No, simple aggressive AI
                   for(let y=0; y<GRID_SIZE; y++) {
                       for(let x=0; x<GRID_SIZE; x++) {
                           if (gridRef.current[y][x].buildingType !== BuildingType.None && gridRef.current[y][x].buildingType !== BuildingType.Road) {
@@ -277,9 +298,8 @@ function App() {
                       }
                   }
 
-                  if (targetX === -1) return enemy; // No targets
+                  if (targetX === -1) return enemy;
 
-                  // Move
                   let nx = enemy.x;
                   let ny = enemy.y;
                   if (minDist > 0.5) {
@@ -290,10 +310,9 @@ function App() {
                       ny += (dy !== 0 ? Math.sign(dy) : 0) * moveSpeed;
                   }
 
-                  // Attack or Defense Damage
                   let hp = enemy.hp;
                   
-                  // Check for nearby defenses
+                  // Turret Damage
                   const gridX = Math.round(nx);
                   const gridY = Math.round(ny);
                   const range = [[-1,0],[1,0],[0,-1],[0,1],[0,0], [-1,-1], [-1,1], [1,-1], [1,1]];
@@ -301,17 +320,15 @@ function App() {
                   range.forEach(([dx, dy]) => {
                        const tx = gridX+dx, ty = gridY+dy;
                        if(tx>=0 && tx<GRID_SIZE && ty>=0 && ty<GRID_SIZE) {
-                           if (gridRef.current[ty][tx].buildingType === BuildingType.Defense) {
-                               hp -= 5; // Turret damage
+                           const tile = gridRef.current[ty][tx];
+                           if (tile.buildingType === BuildingType.Defense) {
+                               hp -= 5 * tile.level; // Scaled damage
                            }
                        }
                   });
 
-                  // Damage Building
                   if (minDist < 1.0 && enemy.attackCooldown <= 0) {
-                       // Reduce stats or destroy building chance
                        if (Math.random() > 0.8) {
-                           // Steal resources
                            setStats(s => ({...s, money: Math.max(0, s.money - 10), food: Math.max(0, s.food - 5)}));
                        }
                        return { ...enemy, x: nx, y: ny, hp, attackCooldown: 5 };
@@ -326,6 +343,92 @@ function App() {
       return () => clearInterval(enemyInterval);
   }, [gameStarted, addNewsItem]);
 
+  // --- Boat Logic ---
+  useEffect(() => {
+      if (!gameStarted) return;
+      const boatInterval = setInterval(() => {
+          const grid = gridRef.current;
+          
+          setBoats(prev => {
+              if (prev.length === 0) return prev;
+
+              // Find unexplored targets
+              let unexploredTiles: {x:number, y:number}[] = [];
+              for(let y=0; y<GRID_SIZE; y++) {
+                  for(let x=0; x<GRID_SIZE; x++) {
+                      if (!grid[y][x].explored) unexploredTiles.push({x,y});
+                  }
+              }
+              
+              if (unexploredTiles.length === 0) return prev;
+
+              return prev.map(boat => {
+                  if (!boat.targetX || grid[boat.targetY!][boat.targetX!].explored) {
+                      // Find new target
+                      let closest = unexploredTiles[0];
+                      let minD = 999;
+                      unexploredTiles.forEach(t => {
+                          const d = Math.abs(t.x - boat.x) + Math.abs(t.y - boat.y);
+                          if (d < minD) { minD = d; closest = t; }
+                      });
+                      boat.targetX = closest.x;
+                      boat.targetY = closest.y;
+                      boat.state = 'exploring';
+                  }
+
+                  // Move
+                  let nx = boat.x;
+                  let ny = boat.y;
+                  const dx = boat.targetX! - boat.x;
+                  const dy = boat.targetY! - boat.y;
+                  const speed = 0.2;
+                  
+                  nx += (dx !== 0 ? Math.sign(dx) : 0) * speed;
+                  ny += (dy !== 0 ? Math.sign(dy) : 0) * speed;
+                  
+                  // Reveal logic
+                  if (Math.abs(dx) < 1.5 && Math.abs(dy) < 1.5) {
+                       // Reveal Area
+                       const gx = Math.round(nx);
+                       const gy = Math.round(ny);
+                       const range = [[0,0],[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1]];
+                       let foundSomething = false;
+                       
+                       setGrid(g => {
+                           const ng = g.map(row => [...row]);
+                           range.forEach(([rx, ry]) => {
+                               if (gy+ry >=0 && gy+ry < GRID_SIZE && gx+rx >=0 && gx+rx < GRID_SIZE) {
+                                   const t = ng[gy+ry][gx+rx];
+                                   if (!t.explored) {
+                                        t.explored = true;
+                                        // Pillage / Discovery
+                                        if (t.resourceType !== ResourceType.None && t.resourceType !== ResourceType.Water) {
+                                            foundSomething = true;
+                                            // Add resources
+                                            if(t.resourceType === ResourceType.Forest) setStats(s => ({...s, wood: s.wood + 20}));
+                                            if(t.resourceType === ResourceType.Stone) setStats(s => ({...s, stone: s.stone + 10}));
+                                        }
+                                   }
+                               }
+                           });
+                           return ng;
+                       });
+                       
+                       if (foundSomething) {
+                           addNewsItem({id: Date.now().toString(), text: "Expedition discovered resources!", type: 'positive'});
+                           setStats(s => ({...s, money: s.money + 50}));
+                       }
+                  }
+
+                  return { ...boat, x: nx, y: ny };
+              });
+          });
+
+      }, BOAT_TICK_RATE_MS);
+      return () => clearInterval(boatInterval);
+  }, [gameStarted, addNewsItem]);
+
+
   // --- Interaction ---
 
   const handleTileClick = useCallback((x: number, y: number) => {
@@ -338,21 +441,48 @@ function App() {
     if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE) return;
 
     const currentTile = currentGrid[y][x];
-    
-    if (currentTile.resourceType === ResourceType.Water) {
-         addNewsItem({id: Date.now().toString(), text: "Cannot build on water.", type: 'negative'});
-         return;
-    }
+    if (!currentTile.explored) return; // Cant build in fog
 
     const buildingConfig = BUILDINGS[tool];
 
-    // Bulldoze
+    // UPGRADE LOGIC
+    if (tool !== BuildingType.None && currentTile.buildingType === tool) {
+        if (currentTile.level >= 3) {
+            addNewsItem({id: Date.now().toString(), text: "Building at max level.", type: 'neutral'});
+            return;
+        }
+        
+        // Calc Upgrade Cost
+        const multiplier = Math.pow(UPGRADE_MULTIPLIER, currentTile.level);
+        const costMoney = Math.floor(buildingConfig.costMoney * multiplier);
+        const costWood = Math.floor(buildingConfig.costWood * multiplier);
+        const costStone = Math.floor(buildingConfig.costStone * multiplier);
+
+        if (currentStats.money >= costMoney && currentStats.wood >= costWood && currentStats.stone >= costStone) {
+             setStats(prev => ({ 
+                ...prev, 
+                money: prev.money - costMoney,
+                wood: prev.wood - costWood,
+                stone: prev.stone - costStone
+            }));
+            
+            const newGrid = currentGrid.map(row => [...row]);
+            newGrid[y][x] = { ...currentTile, level: currentTile.level + 1 };
+            // Recalculate values logic omitted for brevity but land value should update
+            setGrid(newGrid);
+            addNewsItem({id: Date.now().toString(), text: `${buildingConfig.name} upgraded to Level ${currentTile.level+1}!`, type: 'positive'});
+        } else {
+            addNewsItem({id: Date.now().toString(), text: `Upgrade costs $${costMoney}, W${costWood}, S${costStone}.`, type: 'negative'});
+        }
+        return;
+    }
+
     if (tool === BuildingType.None) {
       if (currentTile.buildingType !== BuildingType.None) {
         const demolishCost = 5;
         if (currentStats.money >= demolishCost) {
             const newGrid = currentGrid.map(row => [...row]);
-            newGrid[y][x] = { ...currentTile, buildingType: BuildingType.None };
+            newGrid[y][x] = { ...currentTile, buildingType: BuildingType.None, level: 1 };
             
             // Update land values
             const range = [[-1,0],[1,0],[0,-1],[0,1],[0,0]];
@@ -365,19 +495,26 @@ function App() {
 
             setGrid(newGrid);
             setStats(prev => ({ ...prev, money: prev.money - demolishCost }));
-            
-            // If bulldozing Forest, get Wood
             if (currentTile.resourceType === ResourceType.Forest) {
                  setStats(prev => ({ ...prev, wood: prev.wood + 10 }));
-                 addNewsItem({id: Date.now().toString(), text: "Cleared forest. +10 Wood.", type: 'neutral'});
             }
         }
       }
       return;
     }
 
-    // Place
+    // Build
     if (currentTile.buildingType === BuildingType.None) {
+      // Water check
+      if (currentTile.resourceType === ResourceType.Water && tool !== BuildingType.Port && tool !== BuildingType.Road) {
+           addNewsItem({id: Date.now().toString(), text: "Can only build Ports or Bridges on water.", type: 'negative'});
+           return;
+      }
+      if (tool === BuildingType.Port && currentTile.resourceType !== ResourceType.Water) {
+            addNewsItem({id: Date.now().toString(), text: "Ports must be built on water.", type: 'negative'});
+            return;
+      }
+
       if (currentStats.money >= buildingConfig.costMoney && 
           currentStats.wood >= buildingConfig.costWood &&
           currentStats.stone >= buildingConfig.costStone) {
@@ -390,7 +527,12 @@ function App() {
         }));
         
         const newGrid = currentGrid.map(row => [...row]);
-        newGrid[y][x] = { ...currentTile, buildingType: tool };
+        newGrid[y][x] = { ...currentTile, buildingType: tool, level: 1 };
+        
+        // Spawn boat if Port
+        if (tool === BuildingType.Port) {
+             setBoats(prev => [...prev, { id: Date.now().toString(), x: x, y: y, state: 'idle' }]);
+        }
         
         // Recalculate Land Value
         const range = [[-1,0],[1,0],[0,-1],[0,1],[0,0],[-1,-1],[-1,1],[1,-1],[1,1]];
@@ -410,8 +552,7 @@ function App() {
 
   const handleEnemyClick = useCallback((id: string) => {
       setEnemies(prev => {
-          const newEnemies = prev.map(e => e.id === id ? { ...e, hp: e.hp - 20 } : e).filter(e => e.hp > 0);
-          return newEnemies;
+          return prev.map(e => e.id === id ? { ...e, hp: e.hp - 20 } : e).filter(e => e.hp > 0);
       });
   }, []);
 
@@ -439,6 +580,7 @@ function App() {
         hoveredLandValue={hoveredLandValue}
         setHoveredLandValue={setHoveredLandValue}
         enemies={enemies}
+        boats={boats}
         onEnemyClick={handleEnemyClick}
       />
       

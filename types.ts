@@ -12,6 +12,7 @@ export enum BuildingType {
   Park = 'Park',
   Farm = 'Farm',
   Defense = 'Defense',
+  Port = 'Port',
 }
 
 export enum Era {
@@ -53,6 +54,8 @@ export interface TileData {
   variant: number; // Random seed for visual variation
   resourceType: ResourceType;
   landValue: number; // 0.0 to 1.0+
+  level: number; // 1, 2, 3
+  explored: boolean;
 }
 
 export type Grid = TileData[][];
@@ -77,6 +80,15 @@ export interface Enemy {
   targetX?: number;
   targetY?: number;
   attackCooldown: number;
+}
+
+export interface Boat {
+  id: string;
+  x: number;
+  y: number;
+  targetX?: number;
+  targetY?: number;
+  state: 'idle' | 'exploring' | 'returning';
 }
 
 export interface AIGoal {
