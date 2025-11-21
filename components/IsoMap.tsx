@@ -1,4 +1,3 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -18,6 +17,7 @@ declare global {
       coneGeometry: any;
       cylinderGeometry: any;
       dodecahedronGeometry: any;
+      directionalLight: any;
       group: any;
       instancedMesh: any;
       mesh: any;
