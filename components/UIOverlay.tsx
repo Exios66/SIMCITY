@@ -3,9 +3,9 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
-import React, { useEffect, useRef } from 'react';
-import { BuildingType, CityStats, AIGoal, NewsItem, Era, Weather } from '../types';
-import { BUILDINGS } from '../constants';
+import React, { useEffect, useRef, useState } from 'react';
+import { BuildingType, CityStats, AIGoal, NewsItem, Era, Weather, ActiveDisaster } from '../types';
+import { BUILDINGS, ERA_THRESHOLDS } from '../constants';
 
 interface UIOverlayProps {
   stats: CityStats;
@@ -17,6 +17,7 @@ interface UIOverlayProps {
   isGeneratingGoal: boolean;
   aiEnabled: boolean;
   hoveredLandValue: number | null;
+  activeDisaster: ActiveDisaster | null;
 }
 
 const tools = [
@@ -75,6 +76,64 @@ const ToolButton: React.FC<{
   );
 };
 
+const FPSCounter = () => {
+    const [fps, setFps] = useState(0);
+    const frameCount = useRef(0);
+    const lastTime = useRef(performance.now());
+
+    useEffect(() => {
+        let animId: number;
+        const loop = () => {
+            frameCount.current++;
+            const now = performance.now();
+            if (now - lastTime.current >= 1000) {
+                setFps(Math.round(frameCount.current * 1000 / (now - lastTime.current)));
+                frameCount.current = 0;
+                lastTime.current = now;
+            }
+            animId = requestAnimationFrame(loop);
+        };
+        loop();
+        return () => cancelAnimationFrame(animId);
+    }, []);
+
+    return (
+        <div className="fixed top-1 left-1 text-[10px] text-green-500 font-mono bg-black/50 px-1 rounded z-50 pointer-events-none">
+            {fps} FPS
+        </div>
+    );
+}
+
+const TimelineBar = ({ stats }: { stats: CityStats }) => {
+    const getProgress = () => {
+        const currentEra = stats.era;
+        let nextEra = Era.Industrial;
+        if (currentEra === Era.Industrial) nextEra = Era.Modern;
+        else if (currentEra === Era.Modern) nextEra = Era.Future;
+        else if (currentEra === Era.Future) return 100;
+
+        const target = ERA_THRESHOLDS[nextEra];
+        const popP = Math.min(1, stats.population / target.pop);
+        const moneyP = Math.min(1, stats.money / target.money);
+        return ((popP + moneyP) / 2) * 100;
+    }
+
+    const progress = getProgress();
+
+    return (
+        <div className="w-full max-w-xl bg-gray-900/80 rounded-full h-3 border border-gray-600 relative overflow-hidden shadow-lg mx-2">
+             <div 
+                className="absolute left-0 top-0 bottom-0 bg-gradient-to-r from-blue-600 via-cyan-400 to-fuchsia-500 transition-all duration-1000" 
+                style={{width: `${progress}%`}}
+            ></div>
+             <div className="absolute inset-0 flex justify-between px-4 items-center text-[8px] font-bold uppercase tracking-widest text-white drop-shadow-md">
+                 <span>{stats.era}</span>
+                 <span>{stats.era !== Era.Future ? `${Math.round(progress)}% to Next Era` : 'Pinnacle'}</span>
+             </div>
+        </div>
+    )
+}
+
 const UIOverlay: React.FC<UIOverlayProps> = ({
   stats,
   selectedTool,
@@ -84,7 +143,8 @@ const UIOverlay: React.FC<UIOverlayProps> = ({
   onClaimReward,
   isGeneratingGoal,
   aiEnabled,
-  hoveredLandValue
+  hoveredLandValue,
+  activeDisaster
 }) => {
   const newsRef = useRef<HTMLDivElement>(null);
 
@@ -94,16 +154,31 @@ const UIOverlay: React.FC<UIOverlayProps> = ({
     }
   }, [newsFeed]);
 
-  const eraColor = {
-      [Era.Primitive]: 'text-amber-600',
-      [Era.Industrial]: 'text-gray-400',
-      [Era.Modern]: 'text-blue-400',
-      [Era.Future]: 'text-fuchsia-400',
-  }[stats.era];
+  const formatTime = (time: number) => {
+      const h = Math.floor(time);
+      const m = Math.floor((time - h) * 60);
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const displayH = h % 12 || 12;
+      return `${displayH}:${m.toString().padStart(2,'0')} ${ampm}`;
+  }
 
   return (
+    <>
+    <FPSCounter />
     <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-2 md:p-4 font-sans z-10">
       
+      {/* Timeline & Alerts */}
+      <div className="w-full flex flex-col items-center pointer-events-none mb-2">
+          <TimelineBar stats={stats} />
+          {activeDisaster && (
+              <div className="mt-4 bg-red-600/90 text-white px-6 py-3 rounded-xl border-4 border-red-900 animate-bounce shadow-2xl flex flex-col items-center">
+                   <div className="text-3xl mb-1">⚠️</div>
+                   <div className="font-black text-lg uppercase tracking-widest">{activeDisaster.type} ALERT</div>
+                   <div className="text-sm font-mono">{activeDisaster.message}</div>
+              </div>
+          )}
+      </div>
+
       {/* Top Bar */}
       <div className="flex flex-col md:flex-row md:justify-between md:items-start pointer-events-auto gap-2 w-full max-w-full">
         
@@ -131,14 +206,9 @@ const UIOverlay: React.FC<UIOverlayProps> = ({
             <span className="text-base md:text-xl font-bold text-blue-300 font-mono drop-shadow-md">{stats.population.toLocaleString()}</span>
           </div>
           <div className="w-px h-6 md:h-8 bg-gray-700"></div>
-          <div className="flex flex-col items-center min-w-max">
-             <span className="text-[8px] md:text-[10px] text-gray-400 uppercase font-bold tracking-widest">Era</span>
-             <span className={`text-sm md:text-base font-bold font-mono ${eraColor}`}>{stats.era}</span>
-          </div>
-          <div className="w-px h-6 md:h-8 bg-gray-700"></div>
           <div className="flex flex-col items-end min-w-max">
-             <span className="text-[8px] md:text-[10px] text-gray-400 uppercase font-bold tracking-widest">Day</span>
-             <span className="text-base md:text-lg font-bold text-white font-mono">{stats.day}</span>
+             <span className="text-[8px] md:text-[10px] text-gray-400 uppercase font-bold tracking-widest">Day {stats.day}</span>
+             <span className="text-base md:text-lg font-bold text-white font-mono text-yellow-300">{formatTime(stats.timeOfDay)}</span>
           </div>
         </div>
 
@@ -253,6 +323,7 @@ const UIOverlay: React.FC<UIOverlayProps> = ({
                 ${news.type === 'positive' ? 'border-green-500 text-green-200 bg-green-900/20' : ''}
                 ${news.type === 'negative' ? 'border-red-500 text-red-200 bg-red-900/20' : ''}
                 ${news.type === 'neutral' ? 'border-blue-400 text-blue-100 bg-blue-900/20' : ''}
+                ${news.type === 'disaster' ? 'border-red-600 text-red-100 bg-red-950/80 font-bold' : ''}
               `}>
                 {news.text}
               </div>
@@ -266,6 +337,7 @@ const UIOverlay: React.FC<UIOverlayProps> = ({
         <a href="https://x.com/ammaar" target="_blank" rel="noreferrer">Created by @ammaar</a>
       </div>
     </div>
+    </>
   );
 };
 

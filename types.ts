@@ -13,6 +13,7 @@ export enum BuildingType {
   Farm = 'Farm',
   Defense = 'Defense',
   Port = 'Port',
+  Rubble = 'Rubble', // Burnt/Destroyed building
 }
 
 export enum Era {
@@ -33,6 +34,13 @@ export enum ResourceType {
   Water = 'Water',
   Forest = 'Forest',
   Stone = 'Stone',
+}
+
+export enum DisasterType {
+  None = 'None',
+  Meteor = 'Meteor',
+  Earthquake = 'Earthquake',
+  Fire = 'Fire',
 }
 
 export interface BuildingConfig {
@@ -67,6 +75,7 @@ export interface CityStats {
   food: number;
   population: number;
   day: number;
+  timeOfDay: number; // 0.0 to 24.0
   era: Era;
   weather: Weather;
 }
@@ -103,5 +112,13 @@ export interface AIGoal {
 export interface NewsItem {
   id: string;
   text: string;
-  type: 'positive' | 'negative' | 'neutral';
+  type: 'positive' | 'negative' | 'neutral' | 'disaster';
+}
+
+export interface ActiveDisaster {
+  type: DisasterType;
+  targetX: number;
+  targetY: number;
+  duration: number; // Frames remaining for visual effect
+  message: string;
 }

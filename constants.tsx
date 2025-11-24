@@ -12,6 +12,10 @@ export const GRID_SIZE = 20; // Increased size for exploration
 export const TICK_RATE_MS = 2000; // Game loop updates every 2 seconds
 export const ENEMY_TICK_RATE_MS = 500; // Enemies move faster
 export const BOAT_TICK_RATE_MS = 800;
+export const TIME_CYCLE_MS = 100; // Update time every 100ms
+export const DAY_DURATION_REALTIME_SEC = 60; // A full day takes 60 seconds
+export const DISASTER_CHANCE = 0.005; // Chance per tick
+
 export const INITIAL_STATS = {
     money: 1500,
     wood: 100,
@@ -101,4 +105,12 @@ export const BUILDINGS: Record<BuildingType, BuildingConfig> = {
     color: '#0ea5e9',
     popGen: 2, incomeGen: 10,
   },
+  [BuildingType.Rubble]: {
+    type: BuildingType.Rubble,
+    costMoney: 0, costWood: 0, costStone: 0,
+    name: 'Rubble',
+    description: 'Destroyed building. Bulldoze to clear.',
+    color: '#292524',
+    popGen: 0, incomeGen: 0,
+  }
 };

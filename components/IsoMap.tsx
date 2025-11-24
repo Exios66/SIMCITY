@@ -5,9 +5,9 @@
 */
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { MapControls, Environment, SoftShadows, Float, Outlines, OrthographicCamera } from '@react-three/drei';
+import { MapControls, Environment, SoftShadows, Float, Outlines, OrthographicCamera, Stars, Sparkles } from '@react-three/drei';
 import * as THREE from 'three';
-import { Grid, BuildingType, Era, Weather, ResourceType, Enemy, Boat } from '../types';
+import { Grid, BuildingType, Era, Weather, ResourceType, Enemy, Boat, DisasterType, ActiveDisaster } from '../types';
 import { GRID_SIZE, BUILDINGS } from '../constants';
 
 // Fix for JSX Intrinsic Elements
@@ -15,6 +15,7 @@ declare module 'react' {
   namespace JSX {
     interface IntrinsicElements {
       ambientLight: any;
+      pointLight: any;
       boxGeometry: any;
       coneGeometry: any;
       cylinderGeometry: any;
@@ -27,6 +28,7 @@ declare module 'react' {
       meshStandardMaterial: any;
       planeGeometry: any;
       sphereGeometry: any;
+      icosahedronGeometry: any;
     }
   }
 }
@@ -39,8 +41,29 @@ const boxGeo = new THREE.BoxGeometry(1, 1, 1);
 const cylinderGeo = new THREE.CylinderGeometry(1, 1, 1, 8);
 const coneGeo = new THREE.ConeGeometry(1, 1, 4);
 const sphereGeo = new THREE.SphereGeometry(1, 8, 8);
+const rubbleGeo = new THREE.DodecahedronGeometry(0.4);
 
 // --- Render Components ---
+
+const DisasterEffect = ({ disaster }: { disaster: ActiveDisaster }) => {
+    const [wx, _, wz] = gridToWorld(disaster.targetX, disaster.targetY);
+    
+    if (disaster.type === DisasterType.Meteor) {
+        return (
+            <group position={[wx, 1, wz]}>
+                 <Sparkles count={50} scale={3} size={4} speed={2} opacity={1} color="#ef4444" />
+                 <mesh position={[0, 1 + Math.sin(Date.now() * 0.01)*0.5, 0]} scale={0.5}>
+                     <sphereGeometry />
+                     <meshBasicMaterial color="orange" />
+                 </mesh>
+            </group>
+        );
+    }
+    if (disaster.type === DisasterType.Earthquake) {
+        return null; // Camera shake handled in parent or just simple visual
+    }
+    return null;
+};
 
 const EnemyMesh = ({ enemy, onClick }: { enemy: Enemy; onClick: (id: string) => void }) => {
     const [wx, _, wz] = gridToWorld(enemy.x, enemy.y);
@@ -150,22 +173,59 @@ interface BuildingMeshProps {
   variant: number;
   level: number;
   resourceUnderlay: ResourceType;
+  isNight: boolean;
   opacity?: number;
   transparent?: boolean;
 }
 
-const ProceduralBuilding = React.memo(({ type, baseColor, x, y, era, variant, level = 1, resourceUnderlay, opacity = 1, transparent = false }: BuildingMeshProps) => {
+const ProceduralBuilding = React.memo(({ type, baseColor, x, y, era, variant, level = 1, resourceUnderlay, isNight, opacity = 1, transparent = false }: BuildingMeshProps) => {
   const rotation = Math.floor(variant * 4) * (Math.PI / 2);
   
   let matParams: any = { color: baseColor, flatShading: true, opacity, transparent };
-  if (era === Era.Primitive) { matParams.roughness = 0.9; matParams.color = new THREE.Color(baseColor).lerp(new THREE.Color("#78350f"), 0.4); } 
-  else if (era === Era.Industrial) { matParams.roughness = 0.7; matParams.color = new THREE.Color(baseColor).lerp(new THREE.Color("#374151"), 0.2); } 
-  else if (era === Era.Modern) { matParams.roughness = 0.2; matParams.metalness = 0.1; } 
-  else if (era === Era.Future) { matParams.roughness = 0.0; matParams.metalness = 0.8; matParams.emissive = new THREE.Color(baseColor); matParams.emissiveIntensity = 0.4; }
+  
+  // Era-based Material Adjustments
+  if (era === Era.Primitive) { 
+      matParams.roughness = 0.9; 
+      matParams.color = new THREE.Color(baseColor).lerp(new THREE.Color("#78350f"), 0.4); 
+  } else if (era === Era.Industrial) { 
+      matParams.roughness = 0.7; 
+      matParams.color = new THREE.Color(baseColor).lerp(new THREE.Color("#374151"), 0.2); 
+  } else if (era === Era.Modern) { 
+      matParams.roughness = 0.2; 
+      matParams.metalness = 0.1; 
+  } else if (era === Era.Future) { 
+      matParams.roughness = 0.0; 
+      matParams.metalness = 0.8; 
+      matParams.emissive = new THREE.Color(baseColor); 
+      matParams.emissiveIntensity = isNight ? 0.8 : 0.4; 
+  }
 
-  const mainMat = useMemo(() => new THREE.MeshStandardMaterial(matParams), [baseColor, era, opacity, transparent]);
+  const mainMat = useMemo(() => new THREE.MeshStandardMaterial(matParams), [baseColor, era, opacity, transparent, isNight]);
+  
+  // Emissive Window Material for Night
+  const windowMat = useMemo(() => {
+      const c = new THREE.Color(era === Era.Future ? '#06b6d4' : '#fef3c7');
+      return new THREE.MeshStandardMaterial({
+          color: c,
+          emissive: c,
+          emissiveIntensity: isNight ? 2 : 0,
+          roughness: 0.1
+      });
+  }, [isNight, era]);
+
   const commonProps = { castShadow: true, receiveShadow: true };
   const yOffset = -0.3;
+
+  // RUBBLE
+  if (type === BuildingType.Rubble) {
+      return (
+        <group position={[0, -0.3, 0]}>
+             <mesh geometry={rubbleGeo} scale={0.6} position={[0.2, 0, 0.1]} material={new THREE.MeshStandardMaterial({color: '#444'})} />
+             <mesh geometry={rubbleGeo} scale={0.4} position={[-0.2, 0, -0.2]} material={new THREE.MeshStandardMaterial({color: '#333'})} />
+             <mesh geometry={rubbleGeo} scale={0.3} position={[0.1, 0.1, -0.1]} material={new THREE.MeshStandardMaterial({color: '#555'})} />
+        </group>
+      )
+  }
 
   // Resource Extraction Visuals
   if (type === BuildingType.Industrial && resourceUnderlay !== ResourceType.None && resourceUnderlay !== ResourceType.Water) {
@@ -184,7 +244,7 @@ const ProceduralBuilding = React.memo(({ type, baseColor, x, y, era, variant, le
           <group rotation={[0, rotation, 0]} position={[0, yOffset, 0]}>
               <mesh {...commonProps} material={new THREE.MeshStandardMaterial({color: '#a8a29e'})} geometry={boxGeo} position={[0, 0.1, 0]} scale={[0.8, 0.2, 0.8]} />
               <mesh {...commonProps} material={new THREE.MeshStandardMaterial({color: '#7c2d12'})} geometry={boxGeo} position={[0.2, 0.3, 0]} scale={[0.3, 0.4, 0.3]} />
-              <mesh position={[0.2, 0.6, 0]} geometry={cylinderGeo} scale={[0.05, 0.6, 0.05]} material={new THREE.MeshStandardMaterial({color: '#fff'})} />
+              <mesh position={[0.2, 0.6, 0]} geometry={cylinderGeo} scale={[0.05, 0.6, 0.05]} material={new THREE.MeshStandardMaterial({color: '#fff', emissive: '#fff', emissiveIntensity: isNight ? 1 : 0})} />
               {level > 1 && <mesh position={[-0.2, 0.2, -0.2]} geometry={boxGeo} scale={[0.2, 0.2, 0.2]} material={new THREE.MeshStandardMaterial({color: '#b45309'})} />}
           </group>
       );
@@ -201,6 +261,8 @@ const ProceduralBuilding = React.memo(({ type, baseColor, x, y, era, variant, le
                         <group>
                             <mesh {...commonProps} material={mainMat} geometry={coneGeo} position={[0, 0.4*scale, 0]} scale={[scale, scale, scale]} />
                             {level > 1 && <mesh position={[0.3, 0.1, 0]} geometry={boxGeo} scale={[0.3,0.3,0.3]} material={new THREE.MeshStandardMaterial({color:'#57534e'})} />}
+                            {/* Fire pit at night */}
+                            {isNight && <pointLight position={[0, 0.2, 0.5]} distance={2} intensity={0.5} color="orange" />}
                         </group>
                     );
                 case BuildingType.Commercial: 
@@ -224,15 +286,16 @@ const ProceduralBuilding = React.memo(({ type, baseColor, x, y, era, variant, le
               return (
                 <>
                   <mesh {...commonProps} material={mainMat} geometry={boxGeo} position={[0, h/2, 0]} scale={[0.7, h, 0.7]} />
-                  {/* Roof Variation based on variant */}
+                  {/* Windows */}
+                  {level > 0 && <mesh position={[0.2, h/2, 0.36]} geometry={boxGeo} scale={[0.1, 0.1, 0.05]} material={windowMat} />}
+                  {level > 0 && <mesh position={[-0.2, h/2 + 0.2, 0.36]} geometry={boxGeo} scale={[0.1, 0.1, 0.05]} material={windowMat} />}
+                  
+                  {/* Roof Variation */}
                   {variant > 0.5 ? (
                       <mesh position={[0, h+0.2, 0]} geometry={coneGeo} scale={[0.75, 0.4, 0.75]} material={new THREE.MeshStandardMaterial({color: '#333'})} />
                   ) : (
                        <mesh position={[0, h+0.05, 0]} geometry={boxGeo} scale={[0.6, 0.1, 0.6]} material={new THREE.MeshStandardMaterial({color: '#333'})} />
                   )}
-                  {/* Level details */}
-                  {level > 1 && <mesh position={[0.2, h/2, 0.36]} geometry={boxGeo} scale={[0.2, h/2, 0.1]} material={new THREE.MeshStandardMaterial({color:'#222'})} />}
-                  {level > 2 && <mesh position={[-0.2, h/3, -0.36]} geometry={boxGeo} scale={[0.3, 0.3, 0.1]} material={new THREE.MeshStandardMaterial({color:'#222'})} />}
                 </>
               );
           case BuildingType.Commercial:
@@ -240,7 +303,7 @@ const ProceduralBuilding = React.memo(({ type, baseColor, x, y, era, variant, le
                 <>
                   <mesh {...commonProps} material={mainMat} geometry={boxGeo} position={[0, h/2, 0]} scale={[0.8, h, 0.8]} />
                   {/* Glass Windows */}
-                  <mesh position={[0, h/2, 0.41]} geometry={boxGeo} scale={[0.6, h-0.2, 0.05]} material={new THREE.MeshStandardMaterial({color: '#93c5fd', metalness: 0.8, roughness: 0.2})} />
+                  <mesh position={[0, h/2, 0.41]} geometry={boxGeo} scale={[0.6, h-0.2, 0.05]} material={era === Era.Future ? windowMat : new THREE.MeshStandardMaterial({color: '#93c5fd', metalness: 0.8, roughness: 0.2, emissive: '#93c5fd', emissiveIntensity: isNight?0.5:0})} />
                   {level > 2 && <mesh position={[0, h+0.2, 0]} geometry={cylinderGeo} scale={[0.2, 0.4, 0.2]} material={mainMat} />}
                 </>
               );
@@ -248,7 +311,7 @@ const ProceduralBuilding = React.memo(({ type, baseColor, x, y, era, variant, le
               return (
                 <>
                   <mesh {...commonProps} material={mainMat} geometry={boxGeo} position={[0, h/2, 0]} scale={[0.9, h, 0.9]} />
-                  <mesh position={[0.3, h+0.2, 0.3]} geometry={cylinderGeo} scale={[0.15 * level, 1, 0.15*level]} material={new THREE.MeshStandardMaterial({color:'#4b5563'})} />
+                  <mesh position={[0.3, h+0.2, 0.3]} geometry={cylinderGeo} scale={[0.15 * level, 1, 0.15*level]} material={new THREE.MeshStandardMaterial({color:'#4b5563', emissive:'#ef4444', emissiveIntensity: isNight?1:0})} />
                   {level > 1 && <mesh position={[-0.3, h, -0.3]} geometry={boxGeo} scale={[0.3, 0.5, 0.3]} material={new THREE.MeshStandardMaterial({color:'#374151'})} />}
                 </>
               );
@@ -260,14 +323,14 @@ const ProceduralBuilding = React.memo(({ type, baseColor, x, y, era, variant, le
                         <meshStandardMaterial color="#15803d" />
                     </mesh>
                     <mesh position={[0, 0.3, 0]} scale={0.5} geometry={coneGeo} material={new THREE.MeshStandardMaterial({color: "#166534"})} />
-                    {level > 1 && <mesh position={[0.3, 0.2, 0.3]} scale={0.3} geometry={sphereGeo} material={new THREE.MeshStandardMaterial({color: "#166534"})} />}
+                    {isNight && <pointLight position={[0, 0.2, 0]} intensity={0.3} distance={1} color="#fbbf24" />}
                 </group>
              );
            case BuildingType.Defense:
              return (
                  <group>
                       <mesh {...commonProps} material={new THREE.MeshStandardMaterial({color: '#475569'})} geometry={cylinderGeo} position={[0, h/2, 0]} scale={[0.5, h, 0.5]} />
-                      <mesh {...commonProps} material={new THREE.MeshStandardMaterial({color: '#dc2626'})} geometry={sphereGeo} position={[0, h+0.1, 0]} scale={[0.3 + (level*0.1), 0.3+(level*0.1), 0.3+(level*0.1)]} />
+                      <mesh {...commonProps} material={new THREE.MeshStandardMaterial({color: '#dc2626', emissive:'red', emissiveIntensity: isNight ? 1: 0})} geometry={sphereGeo} position={[0, h+0.1, 0]} scale={[0.3 + (level*0.1), 0.3+(level*0.1), 0.3+(level*0.1)]} />
                  </group>
              );
            case BuildingType.Farm:
@@ -276,7 +339,6 @@ const ProceduralBuilding = React.memo(({ type, baseColor, x, y, era, variant, le
                          <mesh {...commonProps} material={new THREE.MeshStandardMaterial({color:'#854d0e'})} geometry={boxGeo} position={[0, 0.1, 0]} scale={[0.9, 0.1, 0.9]} />
                          {level === 1 && <mesh position={[0,0.3,0]} scale={0.3} geometry={sphereGeo} material={new THREE.MeshStandardMaterial({color:'#facc15'})} />}
                          {level > 1 && <mesh position={[0.2,0.3,0.2]} scale={0.3} geometry={boxGeo} material={new THREE.MeshStandardMaterial({color:'#a16207'})} />}
-                         {level > 2 && <mesh position={[-0.2,0.5,-0.2]} scale={[0.3,0.8,0.3]} geometry={cylinderGeo} material={new THREE.MeshStandardMaterial({color:'#d4d4d8'})} />}
                     </group>
                 )
           default: return null;
@@ -288,9 +350,14 @@ const ProceduralBuilding = React.memo(({ type, baseColor, x, y, era, variant, le
 
 // --- 3. Map Component ---
 
-const RoadMarkings = React.memo(({ x, y, grid, yOffset, era }: { x: number; y: number; grid: Grid; yOffset: number, era: Era }) => {
+const RoadMarkings = React.memo(({ x, y, grid, yOffset, era, isNight }: { x: number; y: number; grid: Grid; yOffset: number, era: Era, isNight: boolean }) => {
   const roadColor = era === Era.Future ? '#06b6d4' : (era === Era.Primitive ? '#78350f' : '#374151');
-  const lineMaterial = new THREE.MeshStandardMaterial({ color: roadColor, roughness: 1 });
+  const lineMaterial = new THREE.MeshStandardMaterial({ 
+      color: roadColor, 
+      roughness: 1,
+      emissive: era === Era.Future ? '#06b6d4' : 'black',
+      emissiveIntensity: (era === Era.Future && isNight) ? 1 : 0
+  });
   const lineGeo = new THREE.PlaneGeometry(0.15, 0.5);
 
   const hasUp = y > 0 && grid[y - 1][x].buildingType === BuildingType.Road;
@@ -305,6 +372,9 @@ const RoadMarkings = React.memo(({ x, y, grid, yOffset, era }: { x: number; y: n
       {hasDown && <mesh position={[0, -0.25, 0]} geometry={lineGeo} material={lineMaterial} />}
       {hasLeft && <mesh position={[-0.25, 0, 0]} rotation={[0, 0, Math.PI / 2]} geometry={lineGeo} material={lineMaterial} />}
       {hasRight && <mesh position={[0.25, 0, 0]} rotation={[0, 0, Math.PI / 2]} geometry={lineGeo} material={lineMaterial} />}
+      {isNight && era !== Era.Primitive && (
+          <pointLight position={[0, 0, 0.2]} intensity={0.5} distance={0.8} color="yellow" />
+      )}
     </group>
   );
 });
@@ -342,19 +412,24 @@ interface GroundTileProps {
     onHover: (x: number, y: number) => void;
     onLeave: () => void;
     onClick: (x: number, y: number) => void;
+    isNight: boolean;
 }
 
-const GroundTile = React.memo(({ tile, x, y, grid, era, onHover, onLeave, onClick }: GroundTileProps) => {
+const GroundTile = React.memo(({ tile, x, y, grid, era, onHover, onLeave, onClick, isNight }: GroundTileProps) => {
   const [wx, _, wz] = gridToWorld(x, y);
   const type = tile.buildingType;
   const resourceType = tile.resourceType;
+  const isRubble = type === BuildingType.Rubble;
 
   // Base Color logic
   let color = '#10b981'; 
   let topY = -0.3; 
+  let water = false;
   
   if (resourceType === ResourceType.Water) {
-     color = '#3b82f6'; topY = -0.4; 
+     color = '#3b82f6'; topY = -0.4; water = true;
+  } else if (isRubble) {
+     color = '#44403c'; topY = -0.29;
   } else if (type === BuildingType.None || type === BuildingType.Farm) {
      if (type === BuildingType.Farm) color = '#5c4033';
      else if (era === Era.Primitive) color = '#4d7c0f'; 
@@ -375,19 +450,30 @@ const GroundTile = React.memo(({ tile, x, y, grid, era, onHover, onLeave, onClic
       }
   }
 
+  const meshRef = useRef<THREE.Mesh>(null);
+  useFrame((state) => {
+      if(water && meshRef.current) {
+          meshRef.current.position.y = topY - 0.25 + Math.sin(state.clock.elapsedTime + x) * 0.02;
+          // Simple tint shift for water at night
+          if (isNight) (meshRef.current.material as THREE.MeshStandardMaterial).color.set('#1e3a8a');
+          else (meshRef.current.material as THREE.MeshStandardMaterial).color.set('#3b82f6');
+      }
+  });
+
   return (
     <group position={[wx, topY - 0.25, wz]}>
         <mesh 
+            ref={meshRef}
             receiveShadow 
             onPointerEnter={(e) => { e.stopPropagation(); onHover(x, y); }}
             onPointerOut={(e) => { e.stopPropagation(); onLeave(); }}
             onPointerDown={(e) => { e.stopPropagation(); if (e.button === 0) onClick(x, y); }}
         >
             <boxGeometry args={[1, 0.5, 1]} />
-            <meshStandardMaterial color={color} flatShading />
-            {type === BuildingType.Road && <RoadMarkings x={x} y={y} grid={grid} yOffset={0.251} era={era} />}
+            <meshStandardMaterial color={color} flatShading roughness={water ? 0.1 : 1} metalness={water ? 0.5 : 0} />
+            {type === BuildingType.Road && <RoadMarkings x={x} y={y} grid={grid} yOffset={0.251} era={era} isNight={isNight} />}
         </mesh>
-        {type === BuildingType.None && <ResourceProp type={resourceType} />}
+        {(type === BuildingType.None || isRubble) && <ResourceProp type={resourceType} />}
     </group>
   );
 });
@@ -408,15 +494,16 @@ interface IsoMapProps {
   grid: Grid;
   onTileClick: (x: number, y: number) => void;
   hoveredTool: BuildingType;
-  stats: { population: number, era: Era, weather: Weather };
+  stats: { population: number, era: Era, weather: Weather, timeOfDay: number };
   hoveredLandValue: number | null;
   setHoveredLandValue: (val: number | null) => void;
   enemies: Enemy[];
   boats: Boat[];
   onEnemyClick: (id: string) => void;
+  activeDisaster: ActiveDisaster | null;
 }
 
-const IsoMap: React.FC<IsoMapProps> = ({ grid, onTileClick, hoveredTool, stats, setHoveredLandValue, enemies, boats, onEnemyClick }) => {
+const IsoMap: React.FC<IsoMapProps> = ({ grid, onTileClick, hoveredTool, stats, setHoveredLandValue, enemies, boats, onEnemyClick, activeDisaster }) => {
   const [hoveredTile, setHoveredTile] = useState<{x: number, y: number} | null>(null);
 
   const handleHover = useCallback((x: number, y: number) => {
@@ -432,6 +519,13 @@ const IsoMap: React.FC<IsoMapProps> = ({ grid, onTileClick, hoveredTool, stats, 
   const showPreview = hoveredTile && grid[hoveredTile.y][hoveredTile.x].explored && grid[hoveredTile.y][hoveredTile.x].buildingType === BuildingType.None && hoveredTool !== BuildingType.None;
   const previewColor = showPreview ? BUILDINGS[hoveredTool].color : 'white';
   const previewPos = hoveredTile ? gridToWorld(hoveredTile.x, hoveredTile.y) : [0,0,0];
+  
+  // Sun position calc
+  const time = stats.timeOfDay; // 0-24
+  const angle = ((time - 6) / 24) * Math.PI * 2; // 6am = 0 rad
+  const sunX = Math.cos(angle) * 50;
+  const sunY = Math.sin(angle) * 50;
+  const isNight = time < 6 || time > 18;
 
   return (
     <div className="absolute inset-0 bg-sky-900 touch-none">
@@ -439,14 +533,21 @@ const IsoMap: React.FC<IsoMapProps> = ({ grid, onTileClick, hoveredTool, stats, 
         <OrthographicCamera makeDefault zoom={35} position={[20, 20, 20]} near={-100} far={200} />
         <MapControls enableRotate={true} enableZoom={true} minZoom={15} maxZoom={100} maxPolarAngle={Math.PI / 2.2} target={[0,-0.5,0]} />
 
-        <ambientLight intensity={stats.weather === Weather.Rain ? 0.2 : 0.5} />
+        <ambientLight intensity={isNight ? 0.1 : (stats.weather === Weather.Rain ? 0.3 : 0.6)} />
+        
+        {/* Sun / Moon */}
         <directionalLight
           castShadow
-          position={[15, 20, 10]}
-          intensity={stats.weather === Weather.Rain ? 0.5 : 2}
+          position={[10, sunY, sunX]}
+          intensity={isNight ? 0 : (stats.weather === Weather.Rain ? 0.5 : 1.5)}
           shadow-mapSize={[2048, 2048]}
+          color={time < 7 || time > 17 ? "#fdb813" : "#fff"}
         />
-        {stats.weather === Weather.Sunny && <Environment preset="city" />}
+        {isNight && <directionalLight position={[-10, 20, -10]} intensity={0.3} color="#a5f3fc" />} 
+
+        {stats.weather === Weather.Sunny && !isNight && <Environment preset="city" />}
+        {isNight && <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />}
+
         <WeatherEffects weather={stats.weather} />
 
         <group>
@@ -466,6 +567,7 @@ const IsoMap: React.FC<IsoMapProps> = ({ grid, onTileClick, hoveredTool, stats, 
                     onHover={handleHover}
                     onLeave={handleLeave}
                     onClick={onTileClick}
+                    isNight={isNight}
                 />
                 {tile.buildingType !== BuildingType.None && tile.buildingType !== BuildingType.Road && (
                    <group position={[wx, 0, wz]} raycast={() => null}>
@@ -477,6 +579,7 @@ const IsoMap: React.FC<IsoMapProps> = ({ grid, onTileClick, hoveredTool, stats, 
                         variant={tile.variant}
                         level={tile.level}
                         resourceUnderlay={tile.resourceType}
+                        isNight={isNight}
                       />
                     </group>
                 )}
@@ -486,6 +589,7 @@ const IsoMap: React.FC<IsoMapProps> = ({ grid, onTileClick, hoveredTool, stats, 
 
           {enemies.map(enemy => <EnemyMesh key={enemy.id} enemy={enemy} onClick={onEnemyClick} />)}
           {boats.map(boat => <BoatMesh key={boat.id} boat={boat} />)}
+          {activeDisaster && <DisasterEffect disaster={activeDisaster} />}
 
           <group raycast={() => null}>
             {showPreview && hoveredTile && (
@@ -498,6 +602,7 @@ const IsoMap: React.FC<IsoMapProps> = ({ grid, onTileClick, hoveredTool, stats, 
                     transparent opacity={0.7} 
                     era={stats.era} variant={0} level={1}
                     resourceUnderlay={ResourceType.None}
+                    isNight={isNight}
                   />
                 </Float>
               </group>
@@ -508,7 +613,7 @@ const IsoMap: React.FC<IsoMapProps> = ({ grid, onTileClick, hoveredTool, stats, 
           </group>
         </group>
         
-        <SoftShadows size={10} samples={8} />
+        <SoftShadows size={15} samples={10} focus={0} />
       </Canvas>
     </div>
   );

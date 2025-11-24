@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Grid, TileData, BuildingType, CityStats, AIGoal, NewsItem, Era, Weather, ResourceType, Enemy, Boat } from './types';
-import { GRID_SIZE, BUILDINGS, TICK_RATE_MS, ENEMY_TICK_RATE_MS, BOAT_TICK_RATE_MS, INITIAL_STATS, ERA_THRESHOLDS, UPGRADE_MULTIPLIER } from './constants';
+import { Grid, TileData, BuildingType, CityStats, AIGoal, NewsItem, Era, Weather, ResourceType, Enemy, Boat, DisasterType, ActiveDisaster } from './types';
+import { GRID_SIZE, BUILDINGS, TICK_RATE_MS, ENEMY_TICK_RATE_MS, BOAT_TICK_RATE_MS, TIME_CYCLE_MS, DAY_DURATION_REALTIME_SEC, DISASTER_CHANCE, INITIAL_STATS, ERA_THRESHOLDS, UPGRADE_MULTIPLIER } from './constants';
 import IsoMap from './components/IsoMap';
 import UIOverlay from './components/UIOverlay';
 import StartScreen from './components/StartScreen';
@@ -76,6 +76,7 @@ const calculateLandValue = (grid: Grid, x: number, y: number): number => {
             if (tile.buildingType === BuildingType.Park) value += 0.2;
             if (tile.buildingType === BuildingType.Industrial) value -= 0.15;
             if (tile.buildingType === BuildingType.Defense) value += 0.05;
+            if (tile.buildingType === BuildingType.Rubble) value -= 0.3;
             if (tile.level > 1) value += 0.1 * (tile.level - 1);
         }
     });
@@ -90,6 +91,7 @@ function App() {
   const [stats, setStats] = useState<CityStats>({ 
       ...INITIAL_STATS,
       day: 1,
+      timeOfDay: 8, // Start at 8 AM
       era: Era.Primitive,
       weather: Weather.Sunny
   });
@@ -97,6 +99,7 @@ function App() {
   const [boats, setBoats] = useState<Boat[]>([]);
   const [selectedTool, setSelectedTool] = useState<BuildingType>(BuildingType.Road);
   const [hoveredLandValue, setHoveredLandValue] = useState<number | null>(null);
+  const [activeDisaster, setActiveDisaster] = useState<ActiveDisaster | null>(null);
   
   // AI State
   const [currentGoal, setCurrentGoal] = useState<AIGoal | null>(null);
@@ -148,7 +151,33 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameStarted]);
 
-  // --- Game Loop (Resources & Economy) ---
+  // --- Time & Day/Night Cycle ---
+  useEffect(() => {
+      if (!gameStarted) return;
+      
+      const timeInterval = setInterval(() => {
+          setStats(prev => {
+              // Increment time
+              // 24 hours in DAY_DURATION_REALTIME_SEC
+              // Update interval is TIME_CYCLE_MS
+              const hoursPerUpdate = (24 / DAY_DURATION_REALTIME_SEC) * (TIME_CYCLE_MS / 1000);
+              let newTime = prev.timeOfDay + hoursPerUpdate;
+              if (newTime >= 24) {
+                  newTime = 0;
+              }
+              return { ...prev, timeOfDay: newTime };
+          });
+          
+          if (activeDisaster) {
+               setActiveDisaster(prev => prev && prev.duration > 0 ? { ...prev, duration: prev.duration - 1 } : null);
+          }
+
+      }, TIME_CYCLE_MS);
+      
+      return () => clearInterval(timeInterval);
+  }, [gameStarted, activeDisaster]);
+
+  // --- Game Loop (Resources & Economy & Disasters) ---
   useEffect(() => {
     if (!gameStarted) return;
 
@@ -159,9 +188,10 @@ function App() {
       let dailyStone = 0;
       let dailyFood = 0;
       let buildingCounts: Record<string, number> = {};
+      const currentGrid = gridRef.current;
       
-      gridRef.current.flat().forEach(tile => {
-        if (tile.buildingType !== BuildingType.None) {
+      currentGrid.flat().forEach(tile => {
+        if (tile.buildingType !== BuildingType.None && tile.buildingType !== BuildingType.Rubble) {
           const config = BUILDINGS[tile.buildingType];
           const levelMult = tile.level; // Linear scaling with level
           const income = (config.incomeGen * levelMult) * tile.landValue;
@@ -183,6 +213,42 @@ function App() {
         }
       });
 
+      // --- DISASTER LOGIC ---
+      if (!activeDisaster && Math.random() < DISASTER_CHANCE && statsRef.current.population > 50) {
+          const r = Math.random();
+          const builtTiles = currentGrid.flat().filter(t => t.buildingType !== BuildingType.None && t.buildingType !== BuildingType.Road && t.buildingType !== BuildingType.Rubble);
+          
+          if (builtTiles.length > 0) {
+              const target = builtTiles[Math.floor(Math.random() * builtTiles.length)];
+              let type = DisasterType.None;
+              let message = "";
+              
+              if (r < 0.4) {
+                  type = DisasterType.Meteor;
+                  message = "METEOR STRIKE INBOUND!";
+                  // Destroy immediately
+                  const newGrid = currentGrid.map(row => [...row]);
+                  newGrid[target.y][target.x] = { ...target, buildingType: BuildingType.Rubble, level: 1 };
+                  setGrid(newGrid);
+              } else {
+                  type = DisasterType.Earthquake;
+                  message = "MAJOR EARTHQUAKE DETECTED!";
+                  // Damage random buildings
+                  const newGrid = currentGrid.map(row => [...row]);
+                  let damageCount = 0;
+                  builtTiles.forEach(t => {
+                      if (Math.random() < 0.2) { // 20% chance to destroy other buildings
+                           newGrid[t.y][t.x] = { ...t, buildingType: BuildingType.Rubble, level: 1 };
+                           damageCount++;
+                      }
+                  });
+              }
+
+              setActiveDisaster({ type, targetX: target.x, targetY: target.y, duration: 30, message });
+              addNewsItem({ id: Date.now().toString(), text: message, type: 'disaster' });
+          }
+      }
+
       setStats(prev => {
         const foodConsumption = Math.ceil(prev.population * 0.2); 
         let newFood = prev.food + dailyFood - foodConsumption;
@@ -194,7 +260,7 @@ function App() {
         }
 
         const resCount = buildingCounts[BuildingType.Residential] || 0;
-        // Rough max pop approximation. Doesn't account for levels perfectly but good enough limit.
+        // Rough max pop approximation.
         const maxPop = (resCount * 50) * 3; 
         
         let newPop = prev.population + (starving ? -5 : dailyPopGrowth);
@@ -217,6 +283,7 @@ function App() {
         }
 
         const newStats = {
+          ...prev,
           money: Math.floor(prev.money + dailyIncome),
           wood: prev.wood + dailyWood,
           stone: prev.stone + dailyStone,
@@ -250,7 +317,7 @@ function App() {
     }, TICK_RATE_MS);
 
     return () => clearInterval(intervalId);
-  }, [fetchNews, gameStarted, addNewsItem]);
+  }, [fetchNews, gameStarted, addNewsItem, activeDisaster]);
 
   // --- Enemy Logic ---
   useEffect(() => {
@@ -468,7 +535,6 @@ function App() {
             
             const newGrid = currentGrid.map(row => [...row]);
             newGrid[y][x] = { ...currentTile, level: currentTile.level + 1 };
-            // Recalculate values logic omitted for brevity but land value should update
             setGrid(newGrid);
             addNewsItem({id: Date.now().toString(), text: `${buildingConfig.name} upgraded to Level ${currentTile.level+1}!`, type: 'positive'});
         } else {
@@ -504,7 +570,7 @@ function App() {
     }
 
     // Build
-    if (currentTile.buildingType === BuildingType.None) {
+    if (currentTile.buildingType === BuildingType.None || currentTile.buildingType === BuildingType.Rubble) {
       // Water check
       if (currentTile.resourceType === ResourceType.Water && tool !== BuildingType.Port && tool !== BuildingType.Road) {
            addNewsItem({id: Date.now().toString(), text: "Can only build Ports or Bridges on water.", type: 'negative'});
@@ -582,6 +648,7 @@ function App() {
         enemies={enemies}
         boats={boats}
         onEnemyClick={handleEnemyClick}
+        activeDisaster={activeDisaster}
       />
       
       {!gameStarted && <StartScreen onStart={handleStart} />}
@@ -597,6 +664,7 @@ function App() {
           isGeneratingGoal={isGeneratingGoal}
           aiEnabled={aiEnabled}
           hoveredLandValue={hoveredLandValue}
+          activeDisaster={activeDisaster}
         />
       )}
 
